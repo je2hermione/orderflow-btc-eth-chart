@@ -1,0 +1,17 @@
+services:
+  orderflow:
+    build: .
+    container_name: orderflow
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - orderflow-data:/data
+    environment:
+      - DATA_DIR=/data
+      - WEB_DIR=/app/web
+      # comma-separated, lowercase. e.g. "btcusdt,ethusdt,solusdt"
+      - SYMBOLS=btcusdt,ethusdt
+
+volumes:
+  orderflow-data:
