@@ -21,9 +21,11 @@ import websockets
 BINANCE_WS = "wss://data-stream.binance.vision"
 FALLBACK_WS = "wss://stream.binance.com:9443"
 
-# flush every N trades or every M seconds, whichever first
 FLUSH_TRADES = 20000
 FLUSH_SECS = 60
+# retention: delete parquet files older than N days (0 = keep forever)
+RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "30"))
+HEARTBEAT_FILE = os.path.join(os.environ.get("DATA_DIR", "/data"), ".recorder_heartbeat")
 
 
 class SymbolBuffer:
@@ -44,7 +46,6 @@ class SymbolBuffer:
     def flush(self):
         if not self.rows:
             return
-        # group by day (UTC)
         by_day = defaultdict(list)
         for ts, price, qty, is_sell in self.rows:
             day = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -58,13 +59,37 @@ class SymbolBuffer:
                 "is_sell": [r[3] for r in rows],
             })
             if os.path.exists(path):
-                # append: read existing, concat, rewrite
                 old = pq.read_table(path)
                 tbl = pa.concat_tables([old, tbl])
-            pq.write_table(tbl, path, compression="snappy")
+            # atomic write: temp + rename (reader never sees partial file)
+            tmp = path + f".tmp.{os.getpid()}"
+            pq.write_table(tbl, tmp, compression="snappy")
+            os.replace(tmp, path)
             print(f"[{self.symbol}] flushed {len(rows)} trades -> {os.path.basename(path)} (total {self.total})", flush=True)
         self.rows = []
         self.last_flush = time.time()
+        # heartbeat for /api/health
+        try:
+            with open(HEARTBEAT_FILE, "w") as f:
+                f.write(str(int(time.time())))
+        except OSError:
+            pass
+        self._enforce_retention()
+
+    def _enforce_retention(self):
+        if RETENTION_DAYS <= 0:
+            return
+        cutoff = time.time() - RETENTION_DAYS * 86400
+        try:
+            for fn in os.listdir(self.data_dir):
+                if not fn.startswith("trades_") or not fn.endswith(".parquet"):
+                    continue
+                p = os.path.join(self.data_dir, fn)
+                if os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+                    print(f"[{self.symbol}] retention: removed {fn}", flush=True)
+        except OSError:
+            pass
 
 
 async def run_symbol(symbol, data_dir, stop_event):

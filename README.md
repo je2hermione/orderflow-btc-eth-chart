@@ -23,6 +23,16 @@ Backend: tick recorder (WebSocket → Parquet) + FastAPI (footprint agregat + pr
 - **API** (`api/main.py`): agregat footprint per TF via DuckDB langsung dari Parquet. Proxy Polymarket server-side (tidak perlu CORS proxy).
 - **Seed** (`recorder/seed.py`): di first-run, convert history 8 hari dari `web/live-legacy.html` jadi Parquet supaya langsung ada data. Setelah itu recorder yang lanjutkan.
 
+## Keamanan
+
+- **Jangan expose langsung ke WAN.** `docker-compose.yml` bind ke `127.0.0.1:8000` saja.
+  Pasang di belakang reverse proxy (nginx/Caddy) + auth (Authelia/basic auth).
+  API tidak punya autentikasi bawaan.
+- **Polymarket proxy** divalidasi ketat (regex slug/token_id, tanpa redirect, limit 1 MB).
+- **Rate limit** 120 req/menit per IP (in-memory).
+- **Retention** default 30 hari (`RETENTION_DAYS`), cegah disk penuh.
+- `/api/health` lapor `recorder_alive` (heartbeat). Kalau false, cek `docker compose logs`.
+
 ## Deploy
 
 Butuh: Docker + Docker Compose di VPS.

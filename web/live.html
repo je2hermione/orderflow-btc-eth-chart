@@ -1154,17 +1154,19 @@ async function pmLoad() {
     pmCurSlug = slug;
     meta.textContent = mk.question || slug;
     // 2) ambil orderbook Yes & No
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const num = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
     let html = "";
     for (let i = 0; i < Math.min(2, tids.length); i++) {
       const bk = await pmFetch("https://clob.polymarket.com/book?token_id=" + tids[i]);
-      const nm = outs[i] || (i === 0 ? "Yes" : "No");
+      const nm = esc(outs[i] || (i === 0 ? "Yes" : "No"));
       const col = nm.toLowerCase() === "yes" ? "#26a69a" : "#ef5350";
       html += `<div class="pm-side"><h4 style="color:${col}">${nm}</h4>`;
       const asks = (bk.asks || []).slice(-5).reverse(); // ask terendah di atas
       const bids = (bk.bids || []).slice(0, 5);
-      asks.forEach(a => { html += `<div class="pm-row pm-ask"><span>${a.price}</span><span>${(+a.size).toFixed(1)}</span></div>`; });
+      asks.forEach(a => { html += `<div class="pm-row pm-ask"><span>${num(a.price)}</span><span>${num(a.size).toFixed(1)}</span></div>`; });
       html += `<div class="pm-row" style="border-top:1px solid #1e2530;border-bottom:1px solid #1e2530"><span>—</span><span>—</span></div>`;
-      bids.forEach(b => { html += `<div class="pm-row pm-bid"><span>${b.price}</span><span>${(+b.size).toFixed(1)}</span></div>`; });
+      bids.forEach(b => { html += `<div class="pm-row pm-bid"><span>${num(b.price)}</span><span>${num(b.size).toFixed(1)}</span></div>`; });
       html += `</div>`;
     }
     body.innerHTML = html;

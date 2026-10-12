@@ -3,8 +3,11 @@ services:
     build: .
     container_name: orderflow
     restart: unless-stopped
+    # Bind to localhost only. Expose via nginx reverse proxy + Authelia.
+    # Do NOT change to 0.0.0.0:8000 unless you know what you're doing —
+    # the API has no built-in authentication.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - orderflow-data:/data
     environment:
@@ -12,6 +15,13 @@ services:
       - WEB_DIR=/app/web
       # comma-separated, lowercase. e.g. "btcusdt,ethusdt,solusdt"
       - SYMBOLS=btcusdt,ethusdt
+      # delete parquet files older than N days (0 = keep forever)
+      - RETENTION_DAYS=30
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   orderflow-data:
