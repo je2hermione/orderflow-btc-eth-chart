@@ -27,31 +27,28 @@ def main(html_path, data_dir):
 
     for symbol in ("btcusdt", "ethusdt"):
         arr = (hist.get(symbol) or {}).get("1h") or []
-        # group synthetic trades by day
-        by_day = {}
+        # group synthetic trades by HOUR (matches recorder partitioning)
+        by_hour = {}
         for h in arr:
             t0 = h["time"]  # seconds
             levels = h.get("levels") or []
-            day = __import__("datetime").datetime.fromtimestamp(
-                t0, tz=__import__("datetime").timezone.utc).strftime("%Y-%m-%d")
-            rows = by_day.setdefault(day, [])
             n_lv = max(1, len(levels))
             for li, (px, buy, sell) in enumerate(levels):
-                # spread each level's volume across the hour; offset per level to avoid collisions
                 for side, vol, is_sell in (("b", buy, False), ("s", sell, True)):
                     if vol <= 0:
                         continue
-                    # split into chunks of ~0.5 base asset so we don't create 1 giant fake trade
                     chunk = 0.5
                     n = max(1, int(vol / chunk))
                     per = vol / n
                     for k in range(n):
                         frac = (li / n_lv + k / n) % 1.0
                         ts = int((t0 + frac * 3600) * 1000)
-                        rows.append((ts, float(px), float(per), is_sell))
-        for day, rows in sorted(by_day.items()):
+                        hr = __import__("datetime").datetime.fromtimestamp(
+                            ts / 1000, tz=__import__("datetime").timezone.utc).strftime("%Y-%m-%d_%H")
+                        by_hour.setdefault(hr, []).append((ts, float(px), float(per), is_sell))
+        for hr, rows in sorted(by_hour.items()):
             rows.sort()
-            path = os.path.join(data_dir, f"trades_{symbol}_{day}.parquet")
+            path = os.path.join(data_dir, f"trades_{symbol}_{hr}.parquet")
             tbl = pa.table({
                 "ts": [r[0] for r in rows],
                 "price": [r[1] for r in rows],
@@ -59,7 +56,7 @@ def main(html_path, data_dir):
                 "is_sell": [r[3] for r in rows],
             })
             pq.write_table(tbl, path, compression="snappy")
-            print(f"seeded {symbol} {day}: {len(rows)} synthetic trades -> {os.path.basename(path)}")
+            print(f"seeded {symbol} {hr}: {len(rows)} synthetic trades -> {os.path.basename(path)}")
 
 
 if __name__ == "__main__":

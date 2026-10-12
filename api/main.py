@@ -51,6 +51,8 @@ TOKEN_RE = re.compile(r"^[0-9]{1,78}$")
 MAX_UPSTREAM_BYTES = 1_000_000
 
 # simple in-memory rate limiter: 120 req/min per IP
+# NOTE: behind nginx reverse proxy, use X-Forwarded-For (set by proxy).
+# Ensure nginx sets: proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 RATE_LIMIT = 120
 _rate = defaultdict(list)
 
@@ -59,18 +61,45 @@ app = FastAPI(title="Orderflow API")
 
 @app.middleware("http")
 async def rate_limit_mw(request: Request, call_next):
-    ip = request.client.host if request.client else "?"
+    # prefer X-Forwarded-For when behind trusted reverse proxy
+    fwd = request.headers.get("x-forwarded-for")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
     now = time.time()
     q = _rate[ip]
     q[:] = [t for t in q if now - t < 60]
     if len(q) >= RATE_LIMIT:
-        raise HTTPException(429, "rate limit exceeded")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"})
     q.append(now)
+    # cap memory: drop oldest IPs if too many tracked
+    if len(_rate) > 10000:
+        _rate.clear()
     return await call_next(request)
 
 
-def _pq_files(symbol):
-    return sorted(glob.glob(os.path.join(DATA_DIR, f"trades_{symbol}_*.parquet")))
+def _pq_files(symbol, start_ms=None, end_ms=None):
+    """Return parquet files for symbol, optionally filtered by time range.
+    Files are hourly: trades_{symbol}_{YYYY-MM-DD_HH}.parquet"""
+    if start_ms is None or end_ms is None:
+        return sorted(glob.glob(os.path.join(DATA_DIR, f"trades_{symbol}_*.parquet")))
+    # only include hours overlapping [start_ms, end_ms]
+    out = []
+    # round start down to hour, iterate hours
+    hr_ms = 3_600_000
+    t = (start_ms // hr_ms) * hr_ms
+    seen = set()
+    while t < end_ms:
+        hr = datetime.fromtimestamp(t / 1000, tz=timezone.utc).strftime("%Y-%m-%d_%H")
+        if hr not in seen:
+            seen.add(hr)
+            p = os.path.join(DATA_DIR, f"trades_{symbol}_{hr}.parquet")
+            if os.path.exists(p):
+                out.append(p)
+        t += hr_ms
+    # fallback: if no hourly files (old daily format), include daily ones in range
+    if not out:
+        out = sorted(glob.glob(os.path.join(DATA_DIR, f"trades_{symbol}_*.parquet")))
+    return out
 
 
 def _recorder_alive():
@@ -98,9 +127,6 @@ def footprint(
     end: int = Query(None, description="end timestamp ms (exclusive), default now"),
 ):
     """Return footprint candles. Each candle: time, o/h/l/c, levels [[price, buy, sell]...]."""
-    files = _pq_files(symbol)
-    if not files:
-        raise HTTPException(404, "no trade data yet")
     now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     end_ms = end or now_ms
     # validate end: not absurdly far future/past
@@ -109,8 +135,10 @@ def footprint(
     ms = TF_MS[tf]
     bucket = BUCKETS[symbol][tf]
     start_ms = end_ms - limit * ms
-
-    con = duckdb.connect()
+    # filter parquet files to only the hours we need (avoid scanning 30 days)
+    files = _pq_files(symbol, start_ms, end_ms)
+    if not files:
+        raise HTTPException(404, "no trade data yet")
     try:
         q = """
         SELECT

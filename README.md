@@ -28,10 +28,15 @@ Backend: tick recorder (WebSocket → Parquet) + FastAPI (footprint agregat + pr
 - **Jangan expose langsung ke WAN.** `docker-compose.yml` bind ke `127.0.0.1:8000` saja.
   Pasang di belakang reverse proxy (nginx/Caddy) + auth (Authelia/basic auth).
   API tidak punya autentikasi bawaan.
+- **Nginx harus set header** (untuk rate limiter):
+  ```
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  ```
 - **Polymarket proxy** divalidasi ketat (regex slug/token_id, tanpa redirect, limit 1 MB).
-- **Rate limit** 120 req/menit per IP (in-memory).
+- **Rate limit** 120 req/menit per IP (in-memory, pakai X-Forwarded-For).
 - **Retention** default 30 hari (`RETENTION_DAYS`), cegah disk penuh.
-- `/api/health` lapor `recorder_alive` (heartbeat). Kalau false, cek `docker compose logs`.
+- `/api/health` lapor `recorder_alive` (heartbeat). Docker healthcheck restart otomatis kalau recorder mati.
 
 ## Deploy
 

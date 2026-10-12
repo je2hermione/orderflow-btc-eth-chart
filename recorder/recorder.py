@@ -46,12 +46,13 @@ class SymbolBuffer:
     def flush(self):
         if not self.rows:
             return
-        by_day = defaultdict(list)
+        # partition per HOUR: past hours are immutable, only current hour file is rewritten
+        by_hour = defaultdict(list)
         for ts, price, qty, is_sell in self.rows:
-            day = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-            by_day[day].append((ts, price, qty, is_sell))
-        for day, rows in by_day.items():
-            path = os.path.join(self.data_dir, f"trades_{self.symbol}_{day}.parquet")
+            hr = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d_%H")
+            by_hour[hr].append((ts, price, qty, is_sell))
+        for hr, rows in by_hour.items():
+            path = os.path.join(self.data_dir, f"trades_{self.symbol}_{hr}.parquet")
             tbl = pa.table({
                 "ts": [r[0] for r in rows],
                 "price": [r[1] for r in rows],
