@@ -43,7 +43,32 @@ cd orderflow-deploy
 docker compose up -d --build
 ```
 
-Buka `http://<vps-ip>:8000`.
+Buka lewat nginx reverse proxy + Authelia yang sudah ada — service hanya listen di
+`127.0.0.1:8000`, jadi **tidak bisa** diakses langsung via `http://<vps-ip>:8000`.
+
+Contoh server block (sesuaikan `server_name`, sertifikat, dan blok Authelia dengan setup kamu):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name orderflow.contoh.com;   # ganti dengan subdomain kamu
+    # ssl_certificate / ssl_certificate_key ... (sertifikat kamu)
+
+    # Authelia: pakai auth_request / include yang sama seperti service lain
+    # include snippets/authelia.conf;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Tidak perlu websocket upgrade: browser konek langsung ke Binance (wss://stream.binance.com),
+        # nginx cuma proxy static frontend + REST /api/*
+    }
+}
+```
 
 ### Konfigurasi
 
@@ -54,7 +79,7 @@ Edit `docker-compose.yml`:
 
 ### Cek kesehatan
 
-- `GET /api/health` → jumlah file Parquet + ukuran data
+- `GET /api/health` → `{"ok":true,"recorder_alive":true,"files":N,"data_mb":X}` (cek `recorder_alive` — kalau false, WS recorder mati)
 - `GET /api/footprint?symbol=btcusdt&tf=5m&limit=200` → candle footprint JSON
 - Log recorder: `docker compose logs -f`
 
